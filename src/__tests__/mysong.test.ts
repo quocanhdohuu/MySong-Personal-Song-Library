@@ -14,6 +14,8 @@ import {
 } from '../services/songService';
 import { pickRandomSong } from '../services/randomService';
 import { generateCsvContent } from '../services/backupService';
+import { importExcelSongs, parseExcelBuffer } from '../services/excelImportService';
+import * as XLSX from 'xlsx';
 import { normalizeVietnamese } from '../utils/normalizeVietnamese';
 import { songFormSchema } from '../utils/validators';
 
@@ -256,6 +258,70 @@ describe('MySong Core Functionality', () => {
       expect(csv.startsWith('\uFEFF')).toBe(true);
       expect(csv).toContain('Tên bài hát');
       expect(csv).toContain('New Backup Song');
+    });
+  });
+
+  describe('Excel Import', () => {
+    it('parses valid Excel rows, detects duplicates and row errors, and imports to IndexedDB', async () => {
+      const existing = await createSong({
+        name: 'Nơi này có anh',
+        artist: 'Sơn Tùng M-TP',
+        score: 8,
+        tone: 'HIGH',
+        note: '',
+        youtubeUrl: '',
+        isFavorite: false,
+        isLearned: false,
+      });
+
+      const rows = [
+        {
+          'Tên bài hát': 'Nơi này có anh',
+          'Tên ca sĩ': 'Sơn Tùng M-TP',
+          Điểm: '9',
+          Tone: 'Cao',
+          'Yêu thích': 'Có',
+          'Đã thuộc': 'Đã thuộc',
+          'Ghi chú': 'Trùng bài cũ',
+          'Link YouTube': '',
+        },
+        {
+          'Tên bài hát': 'Cắt đôi nỗi sầu',
+          'Tên ca sĩ': 'Tăng Duy Tân',
+          Điểm: '8.5',
+          Tone: 'Vừa',
+          'Yêu thích': 'Không',
+          'Đã thuộc': 'Có',
+          'Ghi chú': 'Bài mới',
+          'Link YouTube': 'https://youtu.be/test123',
+        },
+        {
+          'Tên bài hát': '',
+          'Tên ca sĩ': 'Thiếu tên bài',
+          Điểm: '7',
+          Tone: 'Thấp',
+        },
+      ];
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+      const u8 = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+
+      const preview = parseExcelBuffer(u8, [existing]);
+      expect(preview.validSongs).toHaveLength(2);
+      expect(preview.newSongs).toHaveLength(1);
+      expect(preview.duplicateCount).toBe(1);
+      expect(preview.errors).toHaveLength(1);
+      expect(preview.newSongs[0].tone).toBe('MEDIUM');
+      expect(preview.newSongs[0].score).toBe(8.5);
+      expect(preview.newSongs[0].isLearned).toBe(true);
+
+      const importedCount = await importExcelSongs(preview.newSongs);
+      expect(importedCount).toBe(1);
+
+      const all = await getAllSongs();
+      expect(all).toHaveLength(2);
     });
   });
 });
